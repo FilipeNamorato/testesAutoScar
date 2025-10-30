@@ -15,16 +15,20 @@ def _flatten_py(obj, out, prefix=""):
     Varre recursivamente estruturas Python (dict/list) devolvidas por loadmat
     e produz um dicionário "achatado" com chaves tipo 'setstruct/Scar/Result'.
     """
+    # dicionário
     if isinstance(obj, dict):
         for k, v in obj.items():
             if k.startswith("__"):  # pula metadados do MATLAB
                 continue
             _flatten_py(v, out, f"{prefix}{k}/")
+    # lista ou tupla
     elif isinstance(obj, (list, tuple)):
         # salva o container e também indexa cada item
         out[prefix.rstrip("/")] = np.array(obj, dtype=object)
         for i, v in enumerate(obj):
             _flatten_py(v, out, f"{prefix}{i}/")
+
+    # array n dimensional
     else:
         # tenta converter o valor em ndarray
         try:
@@ -34,38 +38,27 @@ def _flatten_py(obj, out, prefix=""):
 
 def load_any_mat(path):
     """
-    Lê .mat v7 (scipy.io.loadmat) e v7.3 (HDF5/h5py).
-    Retorna um dicionário achatado com chaves amigáveis.
+    Lê .mat v7 (scipy.io.loadmat)
+    Retorna um dicionário achatado com chaves.
     Observação: também indexa cada entrada pelo "último nome" (sufixo).
     """
-    flat = {}
+    flat = {} #Indexação dos sufixos
 
     # 1) v7
     try:
-        md = loadmat(path, simplify_cells=True)
+        md = loadmat(path, simplify_cells=True) 
+        #Limpnando chaves que não interessam
         for k in list(md.keys()):
             if k.startswith("__"):
                 md.pop(k, None)
+        #achatar tudo e colocar em md
         _flatten_py(md, flat, "")
     except Exception:
         pass
-
-    # 2) v7.3
-    try:
-        with h5py.File(path, "r") as f:
-            def walk(g, p=""):
-                for k, v in g.items():
-                    name = f"{p}{k}"
-                    if hasattr(v, "keys"):
-                        walk(v, name + "/")
-                    else:  # Dataset
-                        flat[name] = np.array(v[()])
-            walk(f, "")
-    except Exception:
-        pass
-
-    # 3) também permite buscar por sufixo (última parte do caminho)
-    for k, v in list(flat.items()):
+    
+    
+    # 2) Buscar por sufixo (última parte do caminho)
+    for k, v in list(flat.items()): #o list(flat.items()) é para evitar erro de dicionário mudando de tamanho
         flat[k.split("/")[-1]] = v
 
     if not flat:
@@ -87,6 +80,8 @@ def compute_masks_volume(mat_path, bz_range=(2.0, 5.0)):
       - Máscaras: setstruct/Scar/NoReflow, /Result, /MyocardMask
       - 'ring' = preenchimento do MyocardMask (por fatia).
     """
+    #h,w,s: altura, largura, número de fatias
+    
     d = load_any_mat(mat_path)
 
     # volume de intensidade (necessário para μ e σ por fatia)
@@ -97,11 +92,10 @@ def compute_masks_volume(mat_path, bz_range=(2.0, 5.0)):
     else:
         raise RuntimeError("Não encontrei intensidade (setstruct/Scar/IM ou setstruct/IM).")
 
-    # máscaras do Segment (confirmadas no seu .mat)
-    nrf  = d["setstruct/Scar/NoReflow"].astype(bool)
-    core = d["setstruct/Scar/Result"].astype(bool)
+    # máscaras do Segment
+    nrf  = d["setstruct/Scar/NoReflow"].astype(bool)   # Verde (NRF)
+    core = d["setstruct/Scar/Result"].astype(bool)     # Azul  (Core/Result)
     myo  = d["setstruct/Scar/MyocardMask"].astype(bool)
-
     H, W, S = img.shape
 
     # anel do miocárdio (fill holes slice a slice)
@@ -109,7 +103,7 @@ def compute_masks_volume(mat_path, bz_range=(2.0, 5.0)):
     for k in range(S):
         ring[..., k] = binary_fill_holes(myo[..., k])
 
-    # borderzone (mesma dimensão das máscaras)
+    # borderzone (mesma dimensão das máscaras) via z-score 2σ–5σ
     border = np.zeros_like(core, dtype=bool)
 
     for k in range(S):
@@ -169,13 +163,13 @@ def plot_fibrosis_slice(masks, slice_onebased, lw=2.0, title=None):
             ax.plot(c[:, 1], c[:, 0], color=color, linewidth=width)
 
     draw(ring, "black", 1.2)
-    draw(bord, "yellow", lw)
-    draw(core, "blue", lw + 0.4)
-    draw(nrf,  "green", lw + 0.4)
+    #draw(bord, "yellow", lw)
+    draw(core, "blue", lw + 0.4)   # Azul = Core
+    draw(nrf,  "green", lw + 0.4)  # Verde = NRF
     plt.show()
 
 
-def plot_fibrosis_3d(masks, z_scale=1.0, voxel_size=(1.0, 1.0, 1.0), elev=25, azim=-60):
+def plot_fibrosis_3d(masks, z_scale=6.0, voxel_size=(1.0, 1.0, 1.0), elev=25, azim=-60):
     """
     Desenha contornos 3D de todas as fatias.
     - z_scale: fator para "espaçar" as fatias. Ex.: 6.0
@@ -199,9 +193,9 @@ def plot_fibrosis_3d(masks, z_scale=1.0, voxel_size=(1.0, 1.0, 1.0), elev=25, az
                     zcoord = np.full_like(x, z * zf)
                     ax.plot(x, y, zcoord, color=color, linewidth=1)
 
-    draw(border, "yellow")
-    draw(core,   "blue")
-    draw(nrf,    "green")
+    #draw(border, "yellow")
+    draw(core,   "blue")   # Azul = Core
+    draw(nrf,    "green")  # Verde = NRF
 
     # Aspect ratio consistente com as unidades escolhidas
     ax.set_box_aspect((W * dx, H * dy, max(1, (S - 1) * zf)))
@@ -213,7 +207,7 @@ def plot_fibrosis_3d(masks, z_scale=1.0, voxel_size=(1.0, 1.0, 1.0), elev=25, az
     ax.set_xlabel("X")
     ax.set_ylabel("Y")
     ax.set_zlabel("Z (slice)")
-    plt.title("Fibrosis contours (3D) — Green=NRF • Yellow=BZ • Blue=Core")
+    plt.title("Fibrosis contours (3D) — Green=Core • Blue=BorderZone")
     plt.tight_layout()
     plt.show()
 
@@ -227,7 +221,7 @@ def main():
     ap.add_argument("--mat", required=True, help="Caminho do .mat (ex.: Patient_7.mat)")
     ap.add_argument("--mode", choices=["2d", "3d"], default="2d",
                     help="2d = fatia única; 3d = volume completo")
-    ap.add_argument("--slice", type=int, default=6,
+    ap.add_argument("--slice", type=int, default=7,
                     help="Fatia 1-based para o modo 2d (ex.: 6)")
     ap.add_argument("--z-scale", type=float, default=1.0,
                     help="Fator de escala do eixo Z no 3D (ex.: 6.0)")
@@ -243,7 +237,7 @@ def main():
             masks,
             slice_onebased=args.slice,
             lw=2.0,
-            title=f"Slice {args.slice} — Green=NRF • Yellow=BZ • Blue=Core"
+            title=f"Slice {args.slice} — Green=Core • Blue=BorderZone"
         )
     else:
         plot_fibrosis_3d(
