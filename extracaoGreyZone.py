@@ -29,7 +29,8 @@ def extract_contours_all_slices(lbl, value, dx=1.0, dy=1.0, invert_y=False):
     for s in range(S):
         #converte para float para find_contours que percorre a imagem binária
         # e contra curvas onde a imagem assume valor "level"
-        mask = (lbl[:, :, s] == value).astype(float) 
+        #Aqui diferencia o que é core do que é greyzone, se greyzone=1, core=2
+        mask = (lbl[:, :, s] == value).astype(float)  
         polys = [] # guardar polígonos de cada fatia
         if np.any(mask):
             cs = find_contours(mask, level=0.5)
